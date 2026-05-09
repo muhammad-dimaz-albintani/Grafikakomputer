@@ -194,7 +194,7 @@ function generateMap() {
 
   // --- 5c. Tambah koneksi extra (loop & variasi rute) ---
   //  Pilih pasangan node yang belum terhubung langsung & jaraknya wajar
-  const maxExtraDist = Math.max(MAP_W, MAP_H) * 0.42;
+  const maxExtraDist = Math.max(MAP_W, MAP_H) * 0.30;
   let extraCount = 0;
   const shuffled = [...nodes].sort(() => Math.random() - 0.5);
   for (let i = 0; i < shuffled.length && extraCount < NUM_EXTRA_CONN; i++) {
@@ -208,6 +208,9 @@ function generateMap() {
       }
     }
   }
+
+  // hilangin jalna buntu
+  removeDeadEnds();
 
   // --- 5d. Hitung statistik jalan ---
   const types = edges.map(e => e.type);
@@ -265,12 +268,12 @@ function addEdge(aId, bId) {
     // Dua kontrol point terpisah agar lebih organik
     const split = 0.3 + Math.random() * 0.4;
     cp1 = {
-      x: na.x + (mx - na.x) * split * 2 + nx_ * bend * 0.6,
-      y: na.y + (my - na.y) * split * 2 + ny_ * bend * 0.6
+      x: na.x + (mx - na.x) * split * 2 + nx_ * bend * 0.7,
+      y: na.y + (my - na.y) * split * 2 + ny_ * bend * 0.7
     };
     cp2 = {
-      x: nb.x - (nb.x - mx) * (1 - split) * 2 + nx_ * bend * 0.9,
-      y: nb.y - (nb.y - my) * (1 - split) * 2 + ny_ * bend * 0.9
+      x: nb.x - (nb.x - mx) * (1 - split) * 2 + nx_ * bend * 0.7,
+      y: nb.y - (nb.y - my) * (1 - split) * 2 + ny_ * bend * 0.7
     };
   }
 
@@ -290,6 +293,48 @@ function addEdge(aId, bId) {
 // -------- Helper: cek apakah dua node sudah langsung terhubung --------
 function isDirectlyConnected(a, b) {
   return adjList[a] && adjList[a].some(e => e.nodeId === b);
+}
+
+// -------- Pastikan tidak ada jalan buntu --------
+function removeDeadEnds() {
+  const MIN_DEGREE = 2;
+
+  let changed = true;
+
+  while (changed) {
+    changed = false;
+
+    for (const node of nodes) {
+      const degree = adjList[node.id]?.length || 0;
+
+      // Kalau masih buntu / cuma 1 koneksi
+      if (degree < MIN_DEGREE) {
+
+        let bestNode = null;
+        let bestDist = Infinity;
+
+        for (const other of nodes) {
+          if (other.id === node.id) continue;
+
+          // Jangan connect ke yang sudah connect langsung
+          if (isDirectlyConnected(node.id, other.id)) continue;
+
+          const d = dist(node, other);
+
+          // Cari node terdekat
+          if (d < bestDist) {
+            bestDist = d;
+            bestNode = other.id;
+          }
+        }
+
+        if (bestNode !== null) {
+          addEdge(node.id, bestNode);
+          changed = true;
+        }
+      }
+    }
+  }
 }
 
 // -------- Sample titik sepanjang kurva --------
@@ -533,14 +578,14 @@ function svgEl(tag) {
 //  BAGIAN 8: RENDER LAYER FG — Foreground (path, mobil, marker)
 //
 //  Layer ini di-redraw setiap frame animasi.
-//  Juga menggambar path BFS & marker start/end.
+//  Juga menggambar path Dijkstra & marker start/end.
 // ============================================================
 
 function drawForeground() {
   const ctx = fgCtx;
   ctx.clearRect(0, 0, MAP_W, MAP_H);
 
-  // Gambar path BFS (garis cyan transparan)
+  // Gambar path Dijkstra (garis cyan transparan)
   if (pathPoints.length > 1) {
     ctx.beginPath();
     ctx.moveTo(pathPoints[0].x, pathPoints[0].y);
@@ -557,13 +602,25 @@ function drawForeground() {
   // Gambar marker start
   if (startId !== null) {
     const n = nodes[startId];
+    ctx.save();
+    ctx.shadowColor = 'transparent';
+    ctx.shadowBlur  = 0;
+    ctx.shadowOffsetX = 0;
+    ctx.shadowOffsetY = 0;
     drawMarker(ctx, n.x, n.y, '#e74c3c', 'S');
+    ctx.restore();
   }
 
   // Gambar marker end
   if (endId !== null) {
     const n = nodes[endId];
+    ctx.save();
+    ctx.shadowColor = 'transparent';
+    ctx.shadowBlur  = 0;
+    ctx.shadowOffsetX = 0;
+    ctx.shadowOffsetY = 0;
     drawMarker(ctx, n.x, n.y, '#f39c12', 'E');
+    ctx.restore();
   }
 
   // Gambar mobil
@@ -598,7 +655,9 @@ function drawMarker(ctx, x, y, color, label) {
 function drawCar(ctx, cx, cy, angle) {
   ctx.save();
   ctx.translate(cx, cy);
-  ctx.rotate(angle);
+  // angle=0 means "rightward" (Math.atan2 convention), but the car sprite
+  // is drawn pointing upward (nose at y = -H/2), so we add 90° to align.
+  ctx.rotate(angle + Math.PI / 2);
 
   const W = 12, H = 22;  // Lebar & panjang mobil
 
@@ -956,7 +1015,7 @@ document.getElementById('btnRandomMap').addEventListener('click', () => {
 });
 
 document.getElementById('btnRandomPos').addEventListener('click', () => {
-  if (!mapReady) { alert('Generate map dulu!'); return; }
+  if (!mapReady) { setStatus('Generate map dulu!', 'status-idle'); return; }
   randomPosition();
 });
 
@@ -982,6 +1041,9 @@ document.getElementById('btnReset').addEventListener('click', () => {
     setStatus('Ready', 'status-ready');
     updateUI();
     drawForeground();
+  } else if (mapReady) {
+    setStatus('Map Ready', 'status-ready');
+    updateUI();
   }
 });
 
@@ -1035,12 +1097,17 @@ wrapper.addEventListener('touchmove', (e) => {
 }, { passive: true });
 wrapper.addEventListener('touchend', () => { isDragging = false; });
 
-// Resize: pusatkan ulang kamera
+// Resize: clamp kamera agar peta tidak hilang dari layar
 window.addEventListener('resize', () => {
   const ww = wrapper.clientWidth;
   const wh = wrapper.clientHeight;
-  camOffX = (ww - MAP_W * camScale) / 2;
-  camOffY = (wh - MAP_H * camScale) / 2;
+  const mapScaledW = MAP_W * camScale;
+  const mapScaledH = MAP_H * camScale;
+  // Jika peta lebih kecil dari viewport, pusatkan. Jika lebih besar, clamp.
+  if (mapScaledW < ww) camOffX = (ww - mapScaledW) / 2;
+  else camOffX = Math.min(0, Math.max(ww - mapScaledW, camOffX));
+  if (mapScaledH < wh) camOffY = (wh - mapScaledH) / 2;
+  else camOffY = Math.min(0, Math.max(wh - mapScaledH, camOffY));
   applyTransform();
 });
 

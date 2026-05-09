@@ -396,6 +396,7 @@ html, body {
 }
 
 .canvas-hint.hidden { display: none; }
+.canvas-hint.hidden::before { animation: none; }
 
 @keyframes spin {
   to { transform: rotate(360deg); }
